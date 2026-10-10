@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import jsPDF from "jspdf";
 import "./App.css";
@@ -47,8 +46,43 @@ const initialRows = [
   },
 ];
 
+const MAX_IMAGES = 3;
+
 function numberOf(value) {
   return Math.max(0, Number(value) || 0);
+}
+
+function fileToSquareJpeg(file, maxSize = 900) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+
+    img.onload = () => {
+      const side = Math.min(img.naturalWidth, img.naturalHeight);
+      const sx = (img.naturalWidth - side) / 2;
+      const sy = (img.naturalHeight - side) / 2;
+      const out = Math.min(maxSize, side);
+
+      const canvas = document.createElement("canvas");
+      canvas.width = out;
+      canvas.height = out;
+
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, out, out);
+      ctx.drawImage(img, sx, sy, side, side, 0, 0, out, out);
+
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL("image/jpeg", 0.85));
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Could not load image"));
+    };
+
+    img.src = url;
+  });
 }
 
 function getRowInstruction(row, index) {
@@ -89,6 +123,7 @@ function App() {
   const [gauge, setGauge] = useState("");
   const [notes, setNotes] = useState("");
   const [rows, setRows] = useState(initialRows);
+  const [images, setImages] = useState([]);
 
   const updateRow = (id, field, value) => {
     setRows((current) =>
@@ -127,6 +162,31 @@ function App() {
       ];
       return updated;
     });
+  };
+
+  const handleImages = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+
+    const slots = MAX_IMAGES - images.length;
+    if (slots <= 0) return;
+
+    const results = await Promise.allSettled(
+      files.slice(0, slots).map((file) => fileToSquareJpeg(file))
+    );
+
+    const added = results
+      .filter((r) => r.status === "fulfilled")
+      .map((r) => ({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        src: r.value,
+      }));
+
+    setImages((current) => [...current, ...added].slice(0, MAX_IMAGES));
+  };
+
+  const removeImage = (id) => {
+    setImages((current) => current.filter((image) => image.id !== id));
   };
 
   const generatePDF = () => {
@@ -204,6 +264,29 @@ function App() {
       align: "center",
     });
     y += 12;
+
+    // Images
+    if (images.length > 0) {
+      const gap = 4;
+      const size = (contentWidth - gap * (MAX_IMAGES - 1)) / MAX_IMAGES;
+      const rowWidth = images.length * size + (images.length - 1) * gap;
+      const startX = (pageWidth - rowWidth) / 2;
+
+      ensureSpace(size + 6);
+
+      images.forEach((image, i) => {
+        pdf.addImage(
+          image.src,
+          "JPEG",
+          startX + i * (size + gap),
+          y - 4,
+          size,
+          size
+        );
+      });
+
+      y += size + 6;
+    }
 
     // Pattern details
     sectionHeading("Pattern details");
@@ -404,6 +487,43 @@ function App() {
               />
             </label>
 
+            <div className="field photos-field">
+              <span>
+                Photos <small>optional · up to {MAX_IMAGES}</small>
+              </span>
+
+              {images.length > 0 && (
+                <div className="photo-thumbs">
+                  {images.map((image, index) => (
+                    <div className="photo-thumb" key={image.id}>
+                      <img src={image.src} alt={`Pattern photo ${index + 1}`} />
+                      <button
+                        type="button"
+                        title="Remove photo"
+                        aria-label={`Remove photo ${index + 1}`}
+                        onClick={() => removeImage(image.id)}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {images.length < MAX_IMAGES && (
+                <label className="add-row-button upload-button">
+                  <span>＋</span> Add photo
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={handleImages}
+                    hidden
+                  />
+                </label>
+              )}
+            </div>
+
             <div className="divider" />
 
             <div className="panel-heading rows-heading">
@@ -580,6 +700,18 @@ function App() {
                 <h2>{title.trim() || "Untitled Pattern"}</h2>
                 <p>{skill} · CROCHET PATTERN</p>
               </div>
+
+              {images.length > 0 && (
+                <div className="paper-images">
+                  {images.map((image, index) => (
+                    <img
+                      key={image.id}
+                      src={image.src}
+                      alt={`Pattern photo ${index + 1}`}
+                    />
+                  ))}
+                </div>
+              )}
 
               <div className="paper-details">
                 <div>
